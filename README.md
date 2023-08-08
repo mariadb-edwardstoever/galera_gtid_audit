@@ -1,6 +1,8 @@
 # galera_gtid_watch
 ### Records the GTID of Galera nodes once per minute so that a remote slave can be switched to a different Galera node as master.
 
+Review and edit the file create_objects.sql to meet your needs. You will need to install the plugin mariadb-spider-plugin on the slave.
+
 Once the objects have been created, you will have tables that will compare the local gtid_slave_pos with the remote gtid_binlog_pos on a given Galera node. The comparison will be less valid if the slave is frequently catching up or is stopped while it is catching up.
 
 A quick example is seen here on the replica/slave:
@@ -85,19 +87,20 @@ There is nothing special in Galera to make this work. In my case, I use the foll
 # gtid_domain_id (not set)
 # wsrep_gtid_mode (not set)
 # wsrep_gtid_domain_id (not set)
-# gtid_domain_id
+# gtid_domain_id (not set)
 # server_id (not set) # it is possible to have each Galera node with a 
-                      # different server_id. But, it will add a step when switching.
+                      # different server_id. But, it will add a step when switching masters.
 binlog_format = ROW   # Necessary for Galera
 ```
 ### What is the extra step if each Galera node has a different server_id?
-Let's say you determine you want to switch nodes, and the start is at seq_no 290112. You need to either guess the server_id for that sequence, or get it from one of the binary logs, like this. By the way, if you guess and fail, you can try again. Here is an example of that step:
+Let's say you determine you want to switch nodes, and the start is at seq_no 290112. You need to either guess the server_id for that sequence, or get it from one of the binary logs shown here. By the way, if you guess and fail, you can try again, there are only 3 possibilities. Anyway, here we see how to do it:
 ```
 # THIS STEP IS NECESSARY if each GALERA server has different value for server_id
 root@m1:~$ mariadb-binlog /var/log/mysql/mariadb-bin-log.000017 |grep 290112| grep GTID
 #230808 14:32:11 server id 2  end_log_pos 6065460 CRC32 0x4b5fb18c      GTID 0-2-290112 trans
 root@m1:~$
 ```
+In this case, server_id is 2.
 
 ## What if the Galera node that is acting as Primary/Master crashed a few hours ago?
 If the Primary/Master has crashed and you want to switch the slave to an alternative, all you need to do is review the last moment that the slave was running = ON. Here is an example where we want to switch the slave from m3 (crashed) to m1:
@@ -129,7 +132,7 @@ MariaDB [galera_spider]> select tick, slave_running as running, m1_gtid_binlog_p
 +---------------------+---------+--------------------------+----------------------+------------------------+
 3 rows in set (0.001 sec)
 ```
-We want to resume from the current position using the correct offset which was -5 when the slave was last working. Ignore offsets that increase or decrease each minute which come from the slave running behind master, or catching up to master, or a failure.
+We want to resume from the current position using the correct offset which was -5 when the slave was last working. Ignore offsets that increase or decrease each minute which come from the slave running behind master, or catching up to master, or a failure as it is in this case.
 ```sql
 MariaDB [galera_spider]> stop slave;
 Query OK, 0 rows affected (0.007 sec)
@@ -161,3 +164,8 @@ MariaDB [galera_spider]> show slave status\G
        Slave_SQL_Running_State: Slave has read all relay log; waiting for more updates
 ```
 Checking values on tables that are active prove the slave is lined up properly with the Galera cluster. Now you can work on bringing back the crashed node.
+
+## What if my replica/slave is also a master in a chain of nodes? 
+If your replica/slave is in a chain of replicas and you don't want to replicate down the chain, you can create the objects with `set session sql_log_bin=OFF;` 
+Next, you can set up an exception with the global `replicate_ignore_db='galera_spider'`. See this page:
+https://mariadb.com/kb/en/replication-and-binary-log-system-variables/
