@@ -12,7 +12,7 @@
 /*  ● If mariadb-plugin-spider is already installed, remove/uninstall it before mariadb-install-db. */
 /*  ● Some global options in .cnf files can prevent mariadb-install-db from completing. Move custom .cnf files to /tmp directory. */
  
-
+/* Ref CS0621875 */
 
 -- ensure that SPIDER plugin is correctly installed:
 SELECT ENGINE, SUPPORT FROM information_schema.ENGINES WHERE ENGINE = 'SPIDER';
