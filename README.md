@@ -1,9 +1,9 @@
 # galera_gtid_watch
 ### Records the GTID of Galera nodes once per minute so that a remote slave can be switched to a different Galera node as master.
 
-Review and edit the file create_objects.sql to meet your needs. You will need to install the plugin mariadb-spider-plugin on the slave.
+Review and edit the file create_objects.sql to meet your needs. You will need to install the MariaDB Spider Plugin on the slave.
 
-Once the objects have been created, you will have tables that will compare the local gtid_slave_pos with the remote gtid_binlog_pos on a given Galera node. The comparison will be less valid if the slave is frequently catching up or is stopped while it is catching up.
+Once the objects have been created, you will have tables that will compare the local gtid_slave_pos with the remote gtid_binlog_pos on each Galera node. The comparison will be less valid if the slave is frequently behind the master.
 
 A quick example is seen here on the replica/slave:
 ```sql
@@ -29,13 +29,14 @@ MariaDB [galera_spider]> select tick, slave_running as running, m3_gtid_binlog_p
 +---------------------+---------+--------------------+--------------------------+----------------------+
 3 rows in set (0.001 sec)
 ```
-In this example, we see that the slave has identical gtids as the node m1. We know that this node is behaving as the master.
+In this example, we see that the slave has identical gtids as the node m1. We know that m1 is currently the master.
 
 Next, we see that the the gtid on node m3 has a consistent offset of +5. This means three things:
 - The slave is up-to-date with the Galera cluster, in other words 0 seconds behing master. 
-- If we want to switch masters from m1 to m3, we need to adjust the gtid seq_no +5.
+- If we want to switch masters from m1 to m3, we need to adjust the seq_no position of GTID +5.
 - Only domain 0 matters. We can ignore gtids from domains 77 and 88.
 
+Always select from the view that represents the node you want to SWITCH to in order to get the correct offset. Sometimes, the GTIDs will be identical in which case, you need not change the gtid_slave_pos.
 ```sql
 MariaDB [galera_spider]> stop slave;
 Query OK, 0 rows affected (0.008 sec)
@@ -81,7 +82,7 @@ MariaDB [galera_spider]> select tick, slave_running as running, m3_gtid_binlog_p
 ```
 
 ### How should my Galera be set up for this?
-There is nothing special in Galera to make this work. In my case, I use the following global variables on each Galera node:
+There is nothing special in Galera to make this work. I do not use WSREP_GTID_MODE for this to work. I use the following global variables on each Galera node:
 ```
 # server_id (not set)
 # gtid_domain_id (not set)
@@ -90,12 +91,12 @@ There is nothing special in Galera to make this work. In my case, I use the foll
 # gtid_domain_id (not set)
 # server_id (not set) # it is possible to have each Galera node with a 
                       # different server_id. But, it will add a step when switching masters.
-binlog_format = ROW   # Necessary for Galera
+binlog_format = ROW   # Necessary for Galera. Understand the consequences for the replica/slave.
 ```
 ### What is the extra step if each Galera node has a different server_id?
-Let's say you determine you want to switch nodes, and the start is at seq_no 290112. You need to either guess the server_id for that sequence, or get it from one of the binary logs shown here. By the way, if you guess and fail, you can try again, there are only 3 possibilities. Anyway, here we see how to do it:
+Let's say you determine you want to switch nodes, and the start is at seq_no 290112. You need to either guess the server_id for that sequence, or get it from one of the binary logs shown here. By the way, if you guess the server_id and fail, you can try again, there are only 3 possibilities for a three-node cluster. Anyway, here we see how to do it:
 ```
-# THIS STEP IS NECESSARY if each GALERA server has different value for server_id
+# Look for GTID with seq_no 290112 to get the server_id
 root@m1:~$ mariadb-binlog /var/log/mysql/mariadb-bin-log.000017 |grep 290112| grep GTID
 #230808 14:32:11 server id 2  end_log_pos 6065460 CRC32 0x4b5fb18c      GTID 0-2-290112 trans
 root@m1:~$
@@ -132,7 +133,7 @@ MariaDB [galera_spider]> select tick, slave_running as running, m1_gtid_binlog_p
 +---------------------+---------+--------------------------+----------------------+------------------------+
 3 rows in set (0.001 sec)
 ```
-We want to resume from the current position using the correct offset which was -5 when the slave was last working. Ignore offsets that increase or decrease each minute which come from the slave running behind master, or catching up to master, or a failure as it is in this case.
+We want to resume from the current position using the correct offset which was -5 when the slave was last running. Ignore offsets that increase or decrease each minute which come from the slave running behind master, or catching up to master, or a failure as it is in this case.
 ```sql
 MariaDB [galera_spider]> stop slave;
 Query OK, 0 rows affected (0.007 sec)
